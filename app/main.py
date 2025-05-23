@@ -7,7 +7,7 @@ import io
 import os
 
 from .model import image_embedder # Importa la instancia global
-from .utils import find_similar_images, initialize_image_database, IMAGE_DATABASE
+from .utils import find_similar_images, initialize_image_database
 
 app = FastAPI(
     title="Generative AI Image Search Backend",
@@ -42,8 +42,11 @@ async def startup_event():
     # y colocar algunas imágenes allí para probar.
     os.makedirs("./example_images", exist_ok=True)
     initialize_image_database(image_embedder)
-    if not IMAGE_DATABASE:
-        print("Advertencia: No se cargaron imágenes en la base de datos. Asegúrate de tener imágenes en 'backend/example_images'.")
+    # El chequeo if not IMAGE_DATABASE: ya no es tan relevante porque el índice FAISS podría estar vacío
+    # Es mejor chequear si FAISS_INDEX no es None
+    # if not IMAGE_DATABASE: # Este chequeo puede ser redundante o no tan preciso con FAISS
+    #    print("Advertencia: No se cargaron imágenes en la base de datos. Asegúrate de tener imágenes en 'backend/example_images'.")
+
 
 
 @app.post("/search-similar-images/")
@@ -63,7 +66,8 @@ async def search_similar_images(file: UploadFile = File(...)):
         query_embedding = image_embedder.get_image_embedding(image)
 
         # Buscar imágenes similares
-        similar_images = find_similar_images(query_embedding, top_n=5) # Ajusta top_n según necesidad
+        # top_n=None para que FAISS devuelva todos los que encuentre y luego filtres por umbral
+        similar_images = find_similar_images(query_embedding, top_n=None)
 
         # Retornar los resultados (ID, similitud, y quizás la URL de la imagen si existiera en un CDN)
         # Aquí, para fines de demostración, solo retornamos el ID y la similitud.
@@ -76,7 +80,7 @@ async def search_similar_images(file: UploadFile = File(...)):
         ]
 
         return JSONResponse(content={"results": results_for_frontend})
-
+    
     except Exception as e:
         print(f"Error procesando la solicitud: {e}")
-        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor al procesar la imagen.")
