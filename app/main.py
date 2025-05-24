@@ -60,13 +60,13 @@ async def search_similar_images(file: UploadFile = File(...)):
         query_embedding = image_embedder.get_image_embedding(processed_query_image)
 
         # Buscar imágenes similares
-        similar_images = find_similar_images(query_embedding, top_n=None)
+        similar_images = find_similar_images(query_embedding, top_n=15)
 
         # Filtra los resultados para incluir solo aquellos con similitud >= 0.8
         results_for_frontend = [
             {"id": img["id"], "similarity": float(img["similarity"]), "path": img["path"]}
             for img in similar_images
-            if img["similarity"] >= 0.8
+            if img["similarity"] >= 0.9
         ]
 
         return JSONResponse(content={"results": results_for_frontend})
