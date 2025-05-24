@@ -5,9 +5,11 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 import io
 import os
+import cv2 # Importa OpenCV
+import numpy as np # Necesario para cv2
 
-from .model import image_embedder # Importa la instancia global
-from .utils import find_similar_images, initialize_image_database
+from .model import image_embedder
+from .utils import find_similar_images, initialize_image_database, remove_grid # ¡Importa remove_grid!
 
 app = FastAPI(
     title="Generative AI Image Search Backend",
@@ -15,10 +17,9 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# Configuración de CORS para permitir solicitudes desde el frontend de Next.js
+# Configuración de CORS
 origins = [
-    "http://localhost:3000",  # Frontend Next.js local
-    # Puedes añadir otros orígenes aquí si tu frontend se despliega en otro lugar
+    "http://localhost:3000",
 ]
 
 app.add_middleware(
@@ -29,50 +30,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# --- ¡Añade esta línea para servir archivos estáticos! ---
-# 'directory="./example_images"' es la carpeta donde FastAPI buscará los archivos.
-# 'name="static"' es un nombre interno para la ruta, no la URL.
+# Monta la carpeta 'example_images' para servir archivos estáticos
 app.mount("/static", StaticFiles(directory="./example_images"), name="static")
 
 @app.on_event("startup")
 async def startup_event():
     print("Inicializando base de datos de imágenes...")
-    # Asegúrate de crear una carpeta 'example_images' en el directorio 'backend'
-    # y colocar algunas imágenes allí para probar.
     os.makedirs("./example_images", exist_ok=True)
     initialize_image_database(image_embedder)
-    # El chequeo if not IMAGE_DATABASE: ya no es tan relevante porque el índice FAISS podría estar vacío
-    # Es mejor chequear si FAISS_INDEX no es None
-    # if not IMAGE_DATABASE: # Este chequeo puede ser redundante o no tan preciso con FAISS
-    #    print("Advertencia: No se cargaron imágenes en la base de datos. Asegúrate de tener imágenes en 'backend/example_images'.")
-
-
+    # La advertencia de "No se cargaron imágenes" ahora está en initialize_image_database
 
 @app.post("/search-similar-images/")
 async def search_similar_images(file: UploadFile = File(...)):
     """
     Endpoint para buscar imágenes similares a partir de una imagen de referencia.
+    La imagen de referencia será preprocesada para eliminar la grilla.
     """
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="El archivo subido no es una imagen.")
 
     try:
-        # Leer la imagen subida
+        # Leer la imagen subida en bytes
         contents = await file.read()
-        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        
+        # --- Preprocesar la imagen de consulta para eliminar la grilla ---
+        processed_query_image = remove_grid(contents)
 
-        # Generar el embedding de la imagen de consulta
-        query_embedding = image_embedder.get_image_embedding(image)
+        # Generar el embedding de la imagen de consulta preprocesada
+        query_embedding = image_embedder.get_image_embedding(processed_query_image)
 
         # Buscar imágenes similares
-        # top_n=None para que FAISS devuelva todos los que encuentre y luego filtres por umbral
         similar_images = find_similar_images(query_embedding, top_n=None)
 
-        # Retornar los resultados (ID, similitud, y quizás la URL de la imagen si existiera en un CDN)
-        # Aquí, para fines de demostración, solo retornamos el ID y la similitud.
-        # En un escenario real, el frontend necesitaría una URL para mostrar la imagen.
-        # Por ahora, asumimos que el frontend puede construir la URL si tiene el ID/nombre.
+        # Filtra los resultados para incluir solo aquellos con similitud >= 0.8
         results_for_frontend = [
             {"id": img["id"], "similarity": float(img["similarity"]), "path": img["path"]}
             for img in similar_images
@@ -80,7 +70,8 @@ async def search_similar_images(file: UploadFile = File(...)):
         ]
 
         return JSONResponse(content={"results": results_for_frontend})
-    
+
     except Exception as e:
         print(f"Error procesando la solicitud: {e}")
+        # En un entorno de producción, es mejor no exponer directamente el detalle del error al cliente.
         raise HTTPException(status_code=500, detail="Error interno del servidor al procesar la imagen.")
