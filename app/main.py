@@ -12,7 +12,7 @@ from .model import image_embedder
 from .utils import find_similar_images, initialize_image_database, remove_grid # ¡Importa remove_grid!
 
 app = FastAPI(
-    title="Generative AI Image Search Backend",
+    title="Backend de búsqueda de imágenes con IA generativa",
     description="API para buscar imágenes similares usando embeddings de CLIP.",
     version="0.1.0"
 )
