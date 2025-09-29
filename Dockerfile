@@ -1,5 +1,6 @@
 # Usa una imagen base de Python
-FROM python:3.10-slim-buster
+# FROM python:3.10-slim-buster
+FROM python:3.10-slim-bullseye
 
 # Establece el directorio de trabajo
 WORKDIR /app
@@ -20,6 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia el resto del código de la aplicación
 COPY app/ ./app/
 COPY example_images/ ./example_images/
+COPY imagenes-sin-grid/ ./imagenes-sin-grid/
 
 # Expone el puerto que usará FastAPI
 EXPOSE 8000
