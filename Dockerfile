@@ -1,30 +1,37 @@
 # Usa una imagen base de Python
-# FROM python:3.10-slim-buster
-FROM python:3.10-slim-bullseye
+FROM python:3.10-slim
+
+# Establecer variables de entorno
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Instalar dependencias del sistema necesarias para psycopg2 y PIL
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
 # Establece el directorio de trabajo
 WORKDIR /app
 
-# Instala dependencias del sistema necesarias para OpenCV
-# Estas son bibliotecas que OpenCV podría necesitar incluso si no usas una GUI
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copia los archivos de requisitos e instala las dependencias
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia el resto del código de la aplicación
 COPY app/ ./app/
-COPY example_images/ ./example_images/
-COPY imagenes-sin-grid/ ./imagenes-sin-grid/
+
+# Crear directorio para imágenes de ejemplo
+RUN mkdir -p ./example_images
 
 # Expone el puerto que usará FastAPI
 EXPOSE 8000
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+
 # Comando para correr la aplicación con Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
