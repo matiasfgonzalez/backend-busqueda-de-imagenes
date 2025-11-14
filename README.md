@@ -1,151 +1,231 @@
-# 🔎 Backend de Búsqueda de Imágenes con CLIP + FAISS
+# Backend - Búsqueda de Imágenes con IA
 
-Este proyecto es una **API backend construida con FastAPI** que permite buscar imágenes similares a partir de una imagen de referencia.  
-Utiliza **CLIP (OpenAI)** para generar embeddings de imágenes y **FAISS (Facebook AI Similarity Search)** para realizar búsquedas eficientes de similitud.  
-Además, incluye un preprocesamiento con **OpenCV** para eliminar grillas de fondo en las imágenes (útil para trabajar con dibujos o imágenes escaneadas).
+Sistema de búsqueda de imágenes similares utilizando embeddings generados con CLIP (Contrastive Language-Image Pre-training) y búsqueda vectorial con pgvector.
 
----
+## 🚀 Características
 
-## ✨ Características
+- **Embeddings con CLIP**: Utiliza el modelo `openai/clip-vit-base-patch32` para generar representaciones vectoriales de imágenes
+- **Búsqueda vectorial rápida**: PostgreSQL con extensión pgvector e índices HNSW para búsquedas optimizadas
+- **API REST con FastAPI**: Endpoints modernos y documentados automáticamente
+- **Health checks**: Monitoreo del estado del servicio y la base de datos
+- **Logging estructurado**: Trazabilidad completa de operaciones
+- **Validaciones**: Verificación de dimensiones de vectores y tipos de archivos
 
-- API REST construida con **FastAPI**.
-- Extracción de embeddings con **CLIP (transformers de Hugging Face)**.
-- Búsqueda de similitud usando **FAISS**.
-- Preprocesamiento de imágenes con **OpenCV** para remover grillas de fondo.
-- Soporte para **CORS** (para integrarlo con un frontend en React/Next.js).
-- Servidor estático de imágenes de ejemplo (`/static`).
+## 📋 Requisitos
 
----
+- Python 3.10+
+- PostgreSQL con extensión pgvector
+- Docker y Docker Compose (opcional)
 
-## 🛠️ Tecnologías utilizadas
+## 🛠️ Instalación
 
-- [FastAPI](https://fastapi.tiangolo.com/) → framework web en Python.
-- [Transformers (HuggingFace)](https://huggingface.co/) → modelo CLIP para embeddings.
-- [FAISS](https://github.com/facebookresearch/faiss) → motor de búsqueda de similitud.
-- [OpenCV](https://opencv.org/) → preprocesamiento y limpieza de imágenes.
-- [PIL (Pillow)](https://python-pillow.org/) → manejo de imágenes.
-- [Docker](https://www.docker.com/) → ejecución en contenedores.
-
----
-
-## 📂 Estructura del proyecto
+### Con Docker (Recomendado)
 
 ```bash
-    ├── app/
-    │ ├── main.py # Definición de la API con FastAPI
-    │ ├── model.py # Clase ImageEmbedder con CLIP
-    │ ├── utils.py # Funciones de FAISS y preprocesamiento de imágenes
-    ├── example_images/ # Imágenes de ejemplo para inicializar la BD
-    ├── test_images/ # Imágenes para testing manual
-    ├── requirements.txt # Dependencias de Python
-    ├── Dockerfile # Soporte para ejecución en Docker
-    ├── .env.template # Variables de entorno de ejemplo
-    └── README.md # Documentación del proyecto
+# Desde la raíz del proyecto
+docker-compose up --build
 ```
 
-## ⚙️ Instalación
+### Manual
 
-### 🔹 Opción 1: Local (con Python)
-
-1. Clonar el repositorio:
+1. Instalar dependencias:
 
 ```bash
-    git clone https://github.com/matiasfgonzalez/backend-busqueda-de-imagenes.git
-    cd backend-busqueda-de-imagenes
+cd backend
+pip install -r requirements.txt
 ```
 
-2. Crear un entorno virtual e instalar dependencias:
+2. Configurar variables de entorno:
 
 ```bash
-    python -m venv venv
-    source venv/bin/activate    # En Windows: venv\Scripts\activate
-    pip install -r requirements.txt
+cp .env.example .env
+# Editar .env con tus configuraciones
 ```
 
-3. Configurar variables de entorno:
+3. Ejecutar la aplicación:
 
 ```bash
-    cp .env.template .env
-    # Editar .env según corresponda
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-4. Ejecutar el servidor:
+## 📁 Estructura del Proyecto
 
-```bash
-    uvicorn app.main:app --reload
+```
+backend/
+├── app/
+│   ├── __init__.py
+│   ├── main.py          # Aplicación FastAPI y endpoints
+│   ├── model.py         # Modelo CLIP para embeddings
+│   ├── database.py      # Configuración de base de datos
+│   └── utils.py         # Funciones auxiliares
+├── example_images/      # Imágenes de ejemplo
+├── Dockerfile
+├── requirements.txt
+├── .env.example
+└── README.md
 ```
 
-La API estará disponible en: http://localhost:8000
+## 🔌 API Endpoints
 
-### 🔹 Opción 2: Con Docker
+### Health Check
 
-```bash
-    docker build -t image-search-backend .
-    docker run -p 8000:8000 --env-file .env image-search-backend
+```
+GET /health
 ```
 
-### 🌍 Endpoints principales
+Verifica el estado del servicio y la conexión a la base de datos.
 
+**Respuesta:**
+
+```json
+{
+  "status": "healthy",
+  "service": "image-search-backend",
+  "database": "connected"
+}
+```
+
+### Búsqueda de Imágenes Similares
+
+```
 POST /search-similar-images/
-
-Busca imágenes similares a una imagen de referencia.
-
-Ejemplo con curl:
-
-```bash
-    curl -X POST "http://localhost:8000/search-similar-images/" \
-    -F "file=@test_images/ejemplo.jpg"
 ```
 
-Respuesta:
+Busca imágenes similares a la imagen subida.
 
-```bash
+**Parámetros:**
+
+- `file`: Archivo de imagen (multipart/form-data)
+
+**Respuesta:**
+
+```json
+{
+  "results": [
     {
-    "results": [
-        {
-        "id": "imagen1.jpg",
-        "similarity": 0.92,
-        "path": "./example_images/imagen1.jpg"
-        },
-        {
-        "id": "imagen2.jpg",
-        "similarity": 0.89,
-        "path": "./example_images/imagen2.jpg"
-        }
-    ]
+      "id": 1,
+      "similarity": 0.95,
+      "path": "/static/imagen1.jpg"
+    },
+    {
+      "id": 2,
+      "similarity": 0.87,
+      "path": "/static/imagen2.jpg"
     }
+  ]
+}
 ```
 
-### 📌 Detalles técnicos
+### Archivos Estáticos
 
-- Embeddings: generados con openai/clip-vit-base-patch32.
+```
+GET /static/{filename}
+```
 
-- Dimensión del embedding: 512 (ajustable según el modelo).
+Sirve las imágenes almacenadas.
 
-- Similitud: se usa búsqueda basada en cosine similarity (normalización L2 en FAISS).
+## ⚙️ Variables de Entorno
 
-- Preprocesamiento: las imágenes pasan por remove_grid para detectar y eliminar grillas con OpenCV.
+| Variable               | Descripción                                        | Default                                                      |
+| ---------------------- | -------------------------------------------------- | ------------------------------------------------------------ |
+| `DATABASE_URL`         | URL de conexión a PostgreSQL                       | `postgresql://postgres:postgres@localhost:5432/image_search` |
+| `ALLOWED_ORIGINS`      | Orígenes permitidos para CORS (separados por coma) | `http://localhost:3000`                                      |
+| `SIMILARITY_THRESHOLD` | Umbral mínimo de similitud (0.0-1.0)               | `0.2`                                                        |
+| `LOG_LEVEL`            | Nivel de logging                                   | `INFO`                                                       |
 
-### 🧪 Tests
+## 🗄️ Base de Datos
 
-Podés probar subiendo imágenes a example_images/ y consultando con test_images/.
+### Extensión pgvector
 
-El índice FAISS se construye automáticamente en el arranque con las imágenes de example_images.
+El sistema requiere la extensión pgvector de PostgreSQL para almacenar y buscar vectores eficientemente.
 
-### 🤝 Contribuciones
+### Índice Vectorial
 
-1. Las contribuciones son bienvenidas.
+Se crea automáticamente un índice HNSW (Hierarchical Navigable Small World) para optimizar las búsquedas:
 
-2. Haz un fork del proyecto.
+```sql
+CREATE INDEX idx_embedding_hnsw ON image_embeddings
+USING hnsw (embedding vector_l2_ops)
+WITH (m = 16, ef_construction = 64);
+```
 
-3. Crea una rama (git checkout -b feature-nueva).
+### Esquema
 
-4. Haz commit de tus cambios (git commit -m 'Agrego nueva feature').
+```sql
+CREATE TABLE image_embeddings (
+    id SERIAL PRIMARY KEY,
+    image_path TEXT NOT NULL UNIQUE,
+    embedding VECTOR(512) NOT NULL
+);
+```
 
-5. Haz push a la rama (git push origin feature-nueva).
+## 🔧 Optimizaciones Implementadas
 
-6. Abre un Pull Request.
+1. **Context Managers**: Gestión automática de sesiones de base de datos
+2. **Batch Processing**: Inserción de embeddings en lote para mejor performance
+3. **Normalización de Vectores**: Los embeddings se normalizan para consistencia
+4. **Índices Vectoriales**: HNSW para búsquedas O(log n) en lugar de O(n)
+5. **Connection Pooling**: Reutilización de conexiones a la base de datos
+6. **Modelo en Modo Eval**: Desactivación de dropout para inferencia consistente
 
-### 📄 Licencia
+## 📊 Performance
 
-MIT License. Libre para uso y modificación.
+- **Búsqueda**: ~10-50ms para bases de datos de hasta 10,000 imágenes (con índice HNSW)
+- **Generación de Embedding**: ~100-200ms por imagen (CPU), ~20-50ms (GPU)
+- **Carga Inicial**: Procesamiento de ~10 imágenes/segundo
+
+## 🧪 Testing
+
+```bash
+# Ejecutar tests
+pytest
+
+# Con cobertura
+pytest --cov=app tests/
+```
+
+## 📝 Logging
+
+Los logs incluyen:
+
+- Inicialización del modelo y base de datos
+- Procesamiento de imágenes
+- Errores y excepciones con stack traces
+- Métricas de búsqueda
+
+## 🐛 Troubleshooting
+
+### Error: "operator does not exist: vector <-> numeric[]"
+
+**Solución**: El vector debe convertirse explícitamente usando `::vector` en la query SQL. Ya implementado en `utils.py`.
+
+### Error: "No se pueden cargar imágenes"
+
+**Solución**: Verificar que la carpeta `example_images` existe y contiene imágenes válidas (.jpg, .png, .jpeg, etc.)
+
+### Performance lenta en búsquedas
+
+**Solución**:
+
+1. Verificar que el índice HNSW está creado
+2. Aumentar `m` y `ef_construction` en el índice
+3. Considerar usar GPU para embeddings
+
+## 📚 Documentación API
+
+Una vez iniciado el servidor, visita:
+
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+## 🤝 Contribuir
+
+1. Fork el proyecto
+2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
+3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)
+4. Push a la rama (`git push origin feature/AmazingFeature`)
+5. Abre un Pull Request
+
+## 📄 Licencia
+
+Este proyecto está bajo la licencia MIT.
