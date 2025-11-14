@@ -2,76 +2,140 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 from PIL import Image
 import io
 import os
-import cv2 # Importa OpenCV
-import numpy as np # Necesario para cv2
+import logging
 
-from .model import image_embedder
-from .utils import find_similar_images, initialize_image_database, remove_grid # ¡Importa remove_grid!
+from .model import image_embedder  # instancia global
+from .utils import find_similar_images, initialize_image_database
+from .database import create_tables, SessionLocal
+from sqlalchemy import text
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Context manager para manejar el ciclo de vida de la aplicación.
+    """
+    # Startup
+    logger.info("Inicializando base de datos y creando tablas si es necesario...")
+    try:
+        create_tables()
+        os.makedirs("./example_images", exist_ok=True)
+        initialize_image_database(image_embedder, image_folder="./example_images")
+        logger.info("Inicialización completada exitosamente")
+    except Exception as e:
+        logger.error(f"Error durante la inicialización: {e}")
+        raise
+    
+    yield
+    
+    # Shutdown
+    logger.info("Cerrando aplicación...")
+
 
 app = FastAPI(
-    title="Backend de búsqueda de imágenes con IA generativa",
+    title="Generative AI Image Search Backend",
     description="API para buscar imágenes similares usando embeddings de CLIP.",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
 
-# Configuración de CORS
-origins = [
-    "http://localhost:3000",
-]
+# Configuración de CORS para permitir solicitudes desde el frontend de Next.js
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Monta la carpeta 'example_images' para servir archivos estáticos
+# Servir archivos estáticos (imágenes de ejemplo)
 app.mount("/static", StaticFiles(directory="./example_images"), name="static")
 
-@app.on_event("startup")
-async def startup_event():
-    print("Inicializando base de datos de imágenes...")
-    os.makedirs("./example_images", exist_ok=True)
-    initialize_image_database(image_embedder)
-    # La advertencia de "No se cargaron imágenes" ahora está en initialize_image_database
+
+@app.get("/health")
+async def health_check():
+    """
+    Endpoint de health check para verificar el estado del servicio y la base de datos.
+    """
+    try:
+        # Verificar conexión a base de datos
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+        
+        return {
+            "status": "healthy",
+            "service": "image-search-backend",
+            "database": "connected"
+        }
+    except Exception as e:
+        logger.error(f"Health check falló: {e}")
+        raise HTTPException(status_code=503, detail=f"Servicio no disponible: {str(e)}")
+
 
 @app.post("/search-similar-images/")
 async def search_similar_images(file: UploadFile = File(...)):
     """
     Endpoint para buscar imágenes similares a partir de una imagen de referencia.
-    La imagen de referencia será preprocesada para eliminar la grilla.
     """
-    if not file.content_type.startswith("image/"):
+    if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="El archivo subido no es una imagen.")
 
     try:
-        # Leer la imagen subida en bytes
+        # Leer la imagen subida
         contents = await file.read()
-        
-        # --- Preprocesar la imagen de consulta para eliminar la grilla ---
-        processed_query_image = remove_grid(contents)
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
 
-        # Generar el embedding de la imagen de consulta preprocesada
-        query_embedding = image_embedder.get_image_embedding(processed_query_image)
+        # Generar el embedding de la imagen de consulta
+        logger.info(f"Generando embedding para imagen: {file.filename}")
+        query_embedding = image_embedder.get_image_embedding(image)
+        
+        # Validar dimensión del embedding
+        if len(query_embedding) != 512:
+            raise ValueError(f"Embedding generado tiene {len(query_embedding)} dimensiones, se esperaban 512")
 
         # Buscar imágenes similares
-        similar_images = find_similar_images(query_embedding, top_n=15)
+        similar_images = find_similar_images(query_embedding, top_n=10)
+        
+        logger.info(f"Imágenes encontradas antes de filtrar: {len(similar_images)}")
+        if similar_images:
+            logger.info(f"Mejor coincidencia - ID: {similar_images[0]['id']}, "
+                       f"Similarity: {similar_images[0]['similarity']:.4f}, "
+                       f"Distance: {similar_images[0]['distance']:.4f}")
 
-        # Filtra los resultados para incluir solo aquellos con similitud >= 0.8
+        # Filtrar por un umbral de similitud (0.5 = 50% de similitud)
+        threshold = float(os.getenv("SIMILARITY_THRESHOLD", "0.5"))
+        
+        # Construir URL base para las imágenes
+        # En producción, esto debería venir de una variable de entorno
+        base_url = os.getenv("BASE_URL", "http://localhost:8000")
+        
         results_for_frontend = [
-            {"id": img["id"], "similarity": float(img["similarity"]), "path": img["path"]}
+            {
+                "id": img["id"], 
+                "similarity": float(img["similarity"]), 
+                "path": f"{base_url}{img['path']}",  # URL completa
+                "distance": float(img["distance"])
+            }
             for img in similar_images
-            if img["similarity"] >= 0.9
+            if img["similarity"] >= threshold
         ]
-
-        return JSONResponse(content={"results": results_for_frontend})
+        
+        logger.info(f"Encontradas {len(results_for_frontend)} imágenes con similitud >= {threshold}")
+        return JSONResponse(content={"results": results_for_frontend, "threshold": threshold})
 
     except Exception as e:
-        print(f"Error procesando la solicitud: {e}")
-        # En un entorno de producción, es mejor no exponer directamente el detalle del error al cliente.
-        raise HTTPException(status_code=500, detail="Error interno del servidor al procesar la imagen.")
+        logger.error(f"Error procesando la solicitud: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
