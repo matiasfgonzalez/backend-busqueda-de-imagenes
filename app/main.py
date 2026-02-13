@@ -85,6 +85,27 @@ async def health_check():
         raise HTTPException(status_code=503, detail=f"Servicio no disponible: {str(e)}")
 
 
+@app.get("/debug/paths")
+async def debug_paths():
+    """
+    Endpoint de debug para verificar los paths almacenados en la base de datos.
+    """
+    with SessionLocal() as session:
+        from .database import ImageEmbedding
+        results = session.query(ImageEmbedding.id, ImageEmbedding.image_path).limit(5).all()
+        base_url = os.getenv("BASE_URL", "http://localhost:8000")
+        return {
+            "sample_paths": [
+                {
+                    "id": r[0],
+                    "db_path": r[1],
+                    "full_url": f"{base_url}{r[1]}"
+                }
+                for r in results
+            ]
+        }
+
+
 @app.post("/search-similar-images/")
 async def search_similar_images(file: UploadFile = File(...)):
     """
@@ -113,7 +134,8 @@ async def search_similar_images(file: UploadFile = File(...)):
         if similar_images:
             logger.info(f"Mejor coincidencia - ID: {similar_images[0]['id']}, "
                        f"Similarity: {similar_images[0]['similarity']:.4f}, "
-                       f"Distance: {similar_images[0]['distance']:.4f}")
+                       f"Distance: {similar_images[0]['distance']:.4f}, "
+                       f"Path: {similar_images[0]['path']}")
 
         # Filtrar por un umbral de similitud (0.5 = 50% de similitud)
         threshold = float(os.getenv("SIMILARITY_THRESHOLD", "0.5"))
