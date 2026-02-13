@@ -76,21 +76,19 @@ def find_similar_images(query_embedding: np.ndarray, top_n: int = 5) -> List[Dic
     if query_embedding is None:
         return []
 
-    # Convertir a lista de floats
+    # Convertir a lista de floats y luego a string en formato pgvector
     vector_param = [float(x) for x in query_embedding.tolist()]
-    # Convertir a string en formato pgvector: [0.1, 0.2, 0.3, ...]
     vector_str = '[' + ','.join(map(str, vector_param)) + ']'
 
     with SessionLocal() as session:
-        # Usamos SQL crudo para aprovechar el operador <-> (pgvector)
-        # Necesitamos interpolar el vector directamente en la query para evitar problemas con bindparam
-        sql = text(f"""
-            SELECT id, image_path, embedding <-> '{vector_str}'::vector AS distance
+        # Usamos SQL con parámetros bind para evitar SQL injection
+        sql = text("""
+            SELECT id, image_path, embedding <-> :embedding::vector AS distance
             FROM image_embeddings
             ORDER BY distance
             LIMIT :limit
         """)
-        result = session.execute(sql, {"limit": top_n}).fetchall()
+        result = session.execute(sql, {"embedding": vector_str, "limit": top_n}).fetchall()
 
         logger.info(f"Query ejecutada. Resultados encontrados: {len(result)}")
 
