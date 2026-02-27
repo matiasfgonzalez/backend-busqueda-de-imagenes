@@ -9,8 +9,8 @@ import os
 import logging
 
 from .model import image_embedder  # instancia global
-from .utils import find_similar_images, initialize_image_database
-from .database import create_tables, SessionLocal
+from .utils import find_similar_images, initialize_image_database, add_image_to_database, UPLOAD_FOLDER
+from .database import create_tables, SessionLocal, ImageEmbedding
 from sqlalchemy import text
 
 # Configurar logging
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     try:
         create_tables()
         os.makedirs("./example_images", exist_ok=True)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
         initialize_image_database(image_embedder, image_folder="./example_images")
         logger.info("Inicialización completada exitosamente")
     except Exception as e:
@@ -63,6 +64,9 @@ app.add_middleware(
 
 # Servir archivos estáticos (imágenes de ejemplo)
 app.mount("/static", StaticFiles(directory="./example_images"), name="static")
+# Servir imágenes subidas por el usuario (crear carpeta si no existe antes de montar)
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
 
 
 @app.get("/health")
@@ -104,6 +108,81 @@ async def debug_paths():
                 for r in results
             ]
         }
+
+
+@app.post("/add-image/")
+async def add_image(file: UploadFile = File(...)):
+    """
+    Endpoint para subir una nueva imagen, persistirla e indexarla para
+    búsqueda por similitud. La imagen queda disponible de inmediato
+    sin reiniciar el servidor.
+
+    - Valida formato y tamaño del archivo.
+    - Detecta duplicados mediante hash SHA-256.
+    - Genera embedding con el mismo modelo CLIP usado en búsquedas.
+    - Persiste en filesystem + base de datos de forma atómica.
+    """
+    # Validar content-type básico
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail="El archivo subido no es una imagen válida."
+        )
+
+    try:
+        contents = await file.read()
+
+        result = add_image_to_database(
+            embedder_instance=image_embedder,
+            image_bytes=contents,
+            original_filename=file.filename or "unknown",
+        )
+
+        base_url = os.getenv("BASE_URL", "http://localhost:8000")
+
+        return JSONResponse(
+            status_code=201,
+            content={
+                "message": "Imagen subida e indexada exitosamente.",
+                "image": {
+                    "id": result["id"],
+                    "path": f"{base_url}{result['image_path']}",
+                    "sha256": result["sha256_hash"],
+                    "original_filename": result["original_filename"],
+                },
+            },
+        )
+
+    except ValueError as e:
+        # Errores de validación (formato, tamaño, duplicado)
+        logger.warning(f"Validación fallida en /add-image: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except RuntimeError as e:
+        # Errores de procesamiento / indexación
+        logger.error(f"Error de procesamiento en /add-image: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    except Exception as e:
+        logger.error(f"Error inesperado en /add-image: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@app.get("/image-count/")
+async def image_count():
+    """
+    Devuelve la cantidad de imágenes indexadas en la base de datos.
+    """
+    try:
+        with SessionLocal() as session:
+            count = session.query(ImageEmbedding).count()
+            return {"count": count}
+    except Exception as e:
+        logger.error(f"Error obteniendo conteo de imágenes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/search-similar-images/")

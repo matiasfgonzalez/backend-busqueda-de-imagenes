@@ -2,12 +2,18 @@ from typing import List, Dict
 import numpy as np
 from PIL import Image
 import os
+import hashlib
 import logging
+import threading
+import uuid
 
 from .database import SessionLocal, ImageEmbedding
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+# Lock para garantizar concurrencia segura al insertar nuevas imágenes
+_index_lock = threading.Lock()
 
 # Nota: ya no usamos IMAGE_DATABASE en memoria
 # sino que trabajamos contra la tabla image_embeddings en Postgres + pgvector.
@@ -83,7 +89,7 @@ def find_similar_images(query_embedding: np.ndarray, top_n: int = 5) -> List[Dic
     with SessionLocal() as session:
         # Usamos SQL con parámetros bind para evitar SQL injection
         sql = text("""
-            SELECT id, image_path, embedding <-> :embedding::vector AS distance
+            SELECT id, image_path, embedding <-> CAST(:embedding AS vector) AS distance
             FROM image_embeddings
             ORDER BY distance
             LIMIT :limit
@@ -111,3 +117,137 @@ def find_similar_images(query_embedding: np.ndarray, top_n: int = 5) -> List[Dic
             items.append({"id": row_id, "path": path, "similarity": similarity, "distance": distance})
         
         return items
+
+
+# ---------------------------------------------------------------------------
+# Constantes para validación de imágenes subidas
+# ---------------------------------------------------------------------------
+ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+UPLOAD_FOLDER = "./uploaded_images"
+
+
+def compute_sha256(data: bytes) -> str:
+    """Calcula el hash SHA-256 de los bytes de un archivo."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def validate_image_file(filename: str, file_size: int) -> None:
+    """
+    Valida nombre de archivo y tamaño.
+    Lanza ValueError si la validación falla.
+    """
+    if not filename:
+        raise ValueError("El archivo no tiene nombre.")
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(
+            f"Extensión '{ext}' no permitida. Formatos aceptados: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+
+    if file_size > MAX_FILE_SIZE_BYTES:
+        max_mb = MAX_FILE_SIZE_BYTES / (1024 * 1024)
+        raise ValueError(f"El archivo excede el tamaño máximo permitido de {max_mb:.0f} MB.")
+
+
+def add_image_to_database(
+    embedder_instance,
+    image_bytes: bytes,
+    original_filename: str,
+) -> Dict:
+    """
+    Persiste una imagen en el filesystem, genera su embedding e inserta
+    el registro en la base de datos de forma atómica.
+
+    Args:
+        embedder_instance: Instancia de ImageEmbedder.
+        image_bytes: Contenido raw del archivo de imagen.
+        original_filename: Nombre original del archivo subido.
+
+    Returns:
+        Dict con id, image_path y sha256_hash de la imagen creada.
+
+    Raises:
+        ValueError: Validación de archivo.
+        RuntimeError: Error de persistencia / indexación.
+    """
+    # --- 1. Validar archivo ---
+    validate_image_file(original_filename, len(image_bytes))
+
+    # --- 2. Calcular hash para deduplicación ---
+    file_hash = compute_sha256(image_bytes)
+
+    with _index_lock:
+        # Verificar duplicado dentro del lock para evitar race condition
+        with SessionLocal() as session:
+            existing = session.query(ImageEmbedding).filter_by(sha256_hash=file_hash).first()
+            if existing:
+                raise ValueError(
+                    f"La imagen ya existe en la base de datos (ID: {existing.id}, "
+                    f"path: {existing.image_path})."
+                )
+
+        # --- 3. Abrir y validar la imagen con Pillow ---
+        try:
+            image = Image.open(__import__("io").BytesIO(image_bytes)).convert("RGB")
+        except Exception as e:
+            raise ValueError(f"No se pudo abrir la imagen: {e}")
+
+        # --- 4. Generar embedding ---
+        try:
+            embedding = embedder_instance.get_image_embedding(image)
+            emb_list = [float(x) for x in embedding.tolist()]
+            if len(emb_list) != 512:
+                raise RuntimeError(
+                    f"Embedding generado tiene {len(emb_list)} dimensiones, se esperaban 512"
+                )
+        except Exception as e:
+            raise RuntimeError(f"Error generando embedding: {e}")
+
+        # --- 5. Guardar archivo en filesystem ---
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        ext = os.path.splitext(original_filename)[1].lower()
+        safe_filename = f"{uuid.uuid4().hex}{ext}"
+        file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
+
+        try:
+            with open(file_path, "wb") as f:
+                f.write(image_bytes)
+        except Exception as e:
+            raise RuntimeError(f"Error guardando archivo en disco: {e}")
+
+        # --- 6. Insertar en base de datos (atómico con rollback) ---
+        relative_path = f"/uploads/{safe_filename}"
+        try:
+            with SessionLocal() as session:
+                new_row = ImageEmbedding(
+                    image_path=relative_path,
+                    embedding=emb_list,
+                    sha256_hash=file_hash,
+                    original_filename=original_filename,
+                )
+                session.add(new_row)
+                session.commit()
+                session.refresh(new_row)
+
+                created_id = new_row.id
+                logger.info(
+                    f"Imagen indexada exitosamente – ID: {created_id}, "
+                    f"path: {relative_path}, hash: {file_hash[:16]}…"
+                )
+                return {
+                    "id": created_id,
+                    "image_path": relative_path,
+                    "sha256_hash": file_hash,
+                    "original_filename": original_filename,
+                }
+        except Exception as e:
+            # Rollback: eliminar archivo guardado si falla la BD
+            logger.error(f"Error insertando en BD, realizando rollback de archivo: {e}")
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    logger.error(f"No se pudo eliminar archivo huérfano: {file_path}")
+            raise RuntimeError(f"Error al indexar imagen en base de datos: {e}")

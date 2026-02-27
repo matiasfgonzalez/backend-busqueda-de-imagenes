@@ -1,7 +1,8 @@
-from sqlalchemy import create_engine, Column, Integer, Text, Index
+from sqlalchemy import create_engine, Column, Integer, Text, DateTime, Index
 from sqlalchemy.orm import declarative_base, sessionmaker
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import text
+from datetime import datetime, timezone
 import logging
 import os
 
@@ -23,6 +24,9 @@ class ImageEmbedding(Base):
     image_path = Column(Text, nullable=False, unique=True)
     # Ajusta el tamaño del vector a lo que usa tu modelo (512 para CLIP ViT-Base)
     embedding = Column(Vector(512), nullable=False)
+    sha256_hash = Column(Text, nullable=True, unique=True, index=True)
+    original_filename = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=True, default=lambda: datetime.now(timezone.utc))
 
 
 def create_tables():
@@ -40,6 +44,25 @@ def create_tables():
         # Crear tablas a partir de modelos SQLAlchemy
         logger.info("Creando tablas...")
         Base.metadata.create_all(bind=engine)
+
+        # Migración: agregar columnas nuevas si no existen (para tablas ya creadas)
+        with engine.connect() as conn:
+            for col_name, col_def in [
+                ("sha256_hash", "TEXT UNIQUE"),
+                ("original_filename", "TEXT"),
+                ("created_at", "TIMESTAMP"),
+            ]:
+                check = text("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'image_embeddings' AND column_name = :col
+                """)
+                exists = conn.execute(check, {"col": col_name}).fetchone()
+                if not exists:
+                    logger.info(f"Agregando columna '{col_name}' a image_embeddings...")
+                    conn.execute(text(
+                        f"ALTER TABLE image_embeddings ADD COLUMN {col_name} {col_def};"
+                    ))
+                    conn.commit()
 
         # Crear índice vectorial para búsquedas rápidas
         # HNSW es más rápido para búsquedas pero usa más memoria
