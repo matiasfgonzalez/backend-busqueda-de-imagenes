@@ -8,7 +8,7 @@ import io
 import os
 import logging
 
-from .model import image_embedder  # instancia global
+from .model import image_embedder, TOTAL_DIM  # instancia global + dimensión
 from .utils import find_similar_images, initialize_image_database, add_image_to_database, UPLOAD_FOLDER
 from .database import create_tables, SessionLocal, ImageEmbedding
 from sqlalchemy import text
@@ -200,11 +200,11 @@ async def search_similar_images(file: UploadFile = File(...)):
 
         # Generar el embedding de la imagen de consulta
         logger.info(f"Generando embedding para imagen: {file.filename}")
-        query_embedding = image_embedder.get_image_embedding(image)
+        query_embedding = image_embedder.get_combined_embedding(image)
         
         # Validar dimensión del embedding
-        if len(query_embedding) != 512:
-            raise ValueError(f"Embedding generado tiene {len(query_embedding)} dimensiones, se esperaban 512")
+        if len(query_embedding) != TOTAL_DIM:
+            raise ValueError(f"Embedding generado tiene {len(query_embedding)} dimensiones, se esperaban {TOTAL_DIM}")
 
         # Buscar imágenes similares
         similar_images = find_similar_images(query_embedding, top_n=10)

@@ -8,6 +8,7 @@ import threading
 import uuid
 
 from .database import SessionLocal, ImageEmbedding
+from .model import TOTAL_DIM
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -43,13 +44,13 @@ def initialize_image_database(embedder_instance, image_folder: str = "./example_
                 image_path = os.path.join(image_folder, filename)
                 try:
                     img = Image.open(image_path).convert("RGB")
-                    embedding = embedder_instance.get_image_embedding(img)
+                    embedding = embedder_instance.get_combined_embedding(img)
                     # Convertir a lista de floats para que psycopg2/pgvector lo acepte
                     emb_list = [float(x) for x in embedding.tolist()]
                     
                     # Validar dimensión del vector
-                    if len(emb_list) != 512:
-                        print(f"Error: embedding de {filename} tiene {len(emb_list)} dimensiones, se esperaban 512")
+                    if len(emb_list) != TOTAL_DIM:
+                        print(f"Error: embedding de {filename} tiene {len(emb_list)} dimensiones, se esperaban {TOTAL_DIM}")
                         continue
 
                     new_row = ImageEmbedding(
@@ -196,11 +197,11 @@ def add_image_to_database(
 
         # --- 4. Generar embedding ---
         try:
-            embedding = embedder_instance.get_image_embedding(image)
+            embedding = embedder_instance.get_combined_embedding(image)
             emb_list = [float(x) for x in embedding.tolist()]
-            if len(emb_list) != 512:
+            if len(emb_list) != TOTAL_DIM:
                 raise RuntimeError(
-                    f"Embedding generado tiene {len(emb_list)} dimensiones, se esperaban 512"
+                    f"Embedding generado tiene {len(emb_list)} dimensiones, se esperaban {TOTAL_DIM}"
                 )
         except Exception as e:
             raise RuntimeError(f"Error generando embedding: {e}")
