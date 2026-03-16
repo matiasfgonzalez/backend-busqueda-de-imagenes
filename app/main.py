@@ -52,7 +52,7 @@ app = FastAPI(
 )
 
 # Configuración de CORS para permitir solicitudes desde el frontend de Next.js
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:62351").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -228,6 +228,7 @@ async def search_similar_images(file: UploadFile = File(...)):
                 "id": img["id"], 
                 "similarity": float(img["similarity"]), 
                 "path": f"{base_url}{img['path']}",  # URL completa
+                "original_filename": img.get("original_filename"),
                 "distance": float(img["distance"])
             }
             for img in similar_images

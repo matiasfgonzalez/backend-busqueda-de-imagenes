@@ -53,3 +53,5 @@ Thumbs.db
 # Example images (opcional, quitar si quieres versionar las imágenes)
 # example_images/*
 # !example_images/.gitkeep
+
+uploaded_images/

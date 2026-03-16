@@ -90,7 +90,7 @@ def find_similar_images(query_embedding: np.ndarray, top_n: int = 5) -> List[Dic
     with SessionLocal() as session:
         # Usamos SQL con parámetros bind para evitar SQL injection
         sql = text("""
-            SELECT id, image_path, embedding <-> CAST(:embedding AS vector) AS distance
+            SELECT id, image_path, original_filename, embedding <-> CAST(:embedding AS vector) AS distance
             FROM image_embeddings
             ORDER BY distance
             LIMIT :limit
@@ -106,7 +106,8 @@ def find_similar_images(query_embedding: np.ndarray, top_n: int = 5) -> List[Dic
         for row in result:
             row_id = row[0]
             path = row[1]
-            distance = float(row[2])
+            original_filename = row[2]
+            distance = float(row[3])
             
             # Convertir distancia L2 a similitud (0..1)
             # Para vectores normalizados: similarity = 1 - (distance / 2)
@@ -115,7 +116,7 @@ def find_similar_images(query_embedding: np.ndarray, top_n: int = 5) -> List[Dic
             similarity = max(0.0, 1.0 - (distance / 2.0))
             
             logger.debug(f"ID: {row_id}, Path: {path}, Distance: {distance:.4f}, Similarity: {similarity:.4f}")
-            items.append({"id": row_id, "path": path, "similarity": similarity, "distance": distance})
+            items.append({"id": row_id, "path": path, "original_filename": original_filename, "similarity": similarity, "distance": distance})
         
         return items
 
