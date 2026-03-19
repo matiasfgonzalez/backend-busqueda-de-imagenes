@@ -253,3 +253,119 @@ def add_image_to_database(
                 except OSError:
                     logger.error(f"No se pudo eliminar archivo huérfano: {file_path}")
             raise RuntimeError(f"Error al indexar imagen en base de datos: {e}")
+
+
+def get_all_images() -> List[Dict]:
+    """
+    Devuelve la lista de todas las imágenes indexadas en la base de datos.
+    """
+    with SessionLocal() as session:
+        rows = (
+            session.query(ImageEmbedding)
+            .order_by(ImageEmbedding.id.desc())
+            .all()
+        )
+        return [
+            {
+                "id": row.id,
+                "image_path": row.image_path,
+                "original_filename": row.original_filename,
+                "sha256_hash": row.sha256_hash,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+
+
+def _resolve_physical_path(image_path: str) -> str | None:
+    """
+    Dado el path relativo almacenado en la BD (ej. /uploads/abc.jpg o /static/img.png),
+    devuelve el path absoluto en el filesystem, o None si no lo encuentra.
+    """
+    if image_path.startswith("/uploads/"):
+        filename = image_path.replace("/uploads/", "", 1)
+        full = os.path.join(UPLOAD_FOLDER, filename)
+    elif image_path.startswith("/static/"):
+        filename = image_path.replace("/static/", "", 1)
+        full = os.path.join("./example_images", filename)
+    else:
+        return None
+
+    return full if os.path.isfile(full) else None
+
+
+def delete_image_by_id(image_id: int) -> Dict:
+    """
+    Elimina una imagen por ID: borra el archivo físico y el registro en la BD.
+
+    Returns:
+        Dict con información del registro eliminado.
+
+    Raises:
+        ValueError: si el ID no existe.
+        RuntimeError: si falla la eliminación.
+    """
+    with _index_lock:
+        with SessionLocal() as session:
+            row = session.query(ImageEmbedding).filter_by(id=image_id).first()
+            if not row:
+                raise ValueError(f"No existe una imagen con ID {image_id}.")
+
+            info = {
+                "id": row.id,
+                "image_path": row.image_path,
+                "original_filename": row.original_filename,
+            }
+
+            # Eliminar archivo físico
+            physical = _resolve_physical_path(row.image_path)
+            if physical:
+                try:
+                    os.remove(physical)
+                    logger.info(f"Archivo eliminado: {physical}")
+                except OSError as e:
+                    logger.warning(f"No se pudo eliminar archivo {physical}: {e}")
+
+            # Eliminar registro de la BD
+            try:
+                session.delete(row)
+                session.commit()
+                logger.info(f"Registro eliminado de la BD — ID: {image_id}")
+            except Exception as e:
+                session.rollback()
+                raise RuntimeError(f"Error eliminando registro de la BD: {e}")
+
+            return info
+
+
+def delete_all_images() -> int:
+    """
+    Elimina TODAS las imágenes: archivos físicos y registros en la BD.
+
+    Returns:
+        int — cantidad de registros eliminados.
+    """
+    with _index_lock:
+        with SessionLocal() as session:
+            rows = session.query(ImageEmbedding).all()
+            count = len(rows)
+
+            # Eliminar archivos físicos
+            for row in rows:
+                physical = _resolve_physical_path(row.image_path)
+                if physical:
+                    try:
+                        os.remove(physical)
+                    except OSError as e:
+                        logger.warning(f"No se pudo eliminar archivo {physical}: {e}")
+
+            # Eliminar todos los registros
+            try:
+                session.query(ImageEmbedding).delete()
+                session.commit()
+                logger.info(f"Eliminados {count} registros de la BD.")
+            except Exception as e:
+                session.rollback()
+                raise RuntimeError(f"Error eliminando registros: {e}")
+
+            return count

@@ -9,7 +9,15 @@ import os
 import logging
 
 from .model import image_embedder, TOTAL_DIM  # instancia global + dimensión
-from .utils import find_similar_images, initialize_image_database, add_image_to_database, UPLOAD_FOLDER
+from .utils import (
+    find_similar_images,
+    initialize_image_database,
+    add_image_to_database,
+    get_all_images,
+    delete_image_by_id,
+    delete_all_images,
+    UPLOAD_FOLDER,
+)
 from .database import create_tables, SessionLocal, ImageEmbedding
 from sqlalchemy import text
 
@@ -241,3 +249,60 @@ async def search_similar_images(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Error procesando la solicitud: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
+
+
+@app.get("/images/")
+async def list_images():
+    """
+    Devuelve la lista de todas las imágenes indexadas.
+    """
+    try:
+        base_url = os.getenv("BASE_URL", "http://localhost:8000")
+        images = get_all_images()
+        for img in images:
+            img["full_url"] = f"{base_url}{img['image_path']}"
+        return {"images": images, "total": len(images)}
+    except Exception as e:
+        logger.error(f"Error listando imágenes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/images/{image_id}")
+async def delete_single_image(image_id: int):
+    """
+    Elimina una imagen específica por su ID.
+    Borra el archivo físico y el registro de la base de datos.
+    """
+    try:
+        result = delete_image_by_id(image_id)
+        return {
+            "message": f"Imagen ID {image_id} eliminada exitosamente.",
+            "deleted": result,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        logger.error(f"Error eliminando imagen {image_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/images/")
+async def delete_all(confirm: bool = False):
+    """
+    Elimina TODAS las imágenes indexadas.
+    Requiere el parámetro confirm=true para ejecutar.
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Debe enviar ?confirm=true para confirmar la eliminación de todos los registros.",
+        )
+    try:
+        count = delete_all_images()
+        return {
+            "message": f"Se eliminaron {count} imágenes exitosamente.",
+            "deleted_count": count,
+        }
+    except RuntimeError as e:
+        logger.error(f"Error eliminando todas las imágenes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
