@@ -60,7 +60,7 @@ app = FastAPI(
 )
 
 # Configuración de CORS para permitir solicitudes desde el frontend de Next.js
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:62351").split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:62351,*.ater.gob.ar").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -252,16 +252,18 @@ async def search_similar_images(file: UploadFile = File(...)):
 
 
 @app.get("/images/")
-async def list_images():
+async def list_images(page: int = 1, page_size: int = 20):
     """
-    Devuelve la lista de todas las imágenes indexadas.
+    Devuelve una página de imágenes indexadas.
+    Query params: page (default 1), page_size (default 20, max 100).
     """
     try:
+        page_size = min(page_size, 100)  # Limitar tamaño máximo
         base_url = os.getenv("BASE_URL", "http://localhost:8000")
-        images = get_all_images()
-        for img in images:
+        result = get_all_images(page=page, page_size=page_size)
+        for img in result["images"]:
             img["full_url"] = f"{base_url}{img['image_path']}"
-        return {"images": images, "total": len(images)}
+        return result
     except Exception as e:
         logger.error(f"Error listando imágenes: {e}")
         raise HTTPException(status_code=500, detail=str(e))

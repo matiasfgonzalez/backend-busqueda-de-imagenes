@@ -255,17 +255,33 @@ def add_image_to_database(
             raise RuntimeError(f"Error al indexar imagen en base de datos: {e}")
 
 
-def get_all_images() -> List[Dict]:
+def get_all_images(page: int = 1, page_size: int = 20) -> Dict:
     """
-    Devuelve la lista de todas las imágenes indexadas en la base de datos.
+    Devuelve una página de imágenes indexadas en la base de datos.
+
+    Args:
+        page: Número de página (1-indexed).
+        page_size: Cantidad de registros por página.
+
+    Returns:
+        Dict con 'images' (lista), 'total' (int), 'page', 'page_size', 'total_pages'.
     """
     with SessionLocal() as session:
+        total = session.query(ImageEmbedding).count()
+        total_pages = max(1, (total + page_size - 1) // page_size)
+
+        # Clamp page
+        page = max(1, min(page, total_pages))
+
+        offset = (page - 1) * page_size
         rows = (
             session.query(ImageEmbedding)
             .order_by(ImageEmbedding.id.desc())
+            .offset(offset)
+            .limit(page_size)
             .all()
         )
-        return [
+        images = [
             {
                 "id": row.id,
                 "image_path": row.image_path,
@@ -275,6 +291,13 @@ def get_all_images() -> List[Dict]:
             }
             for row in rows
         ]
+        return {
+            "images": images,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+        }
 
 
 def _resolve_physical_path(image_path: str) -> str | None:
