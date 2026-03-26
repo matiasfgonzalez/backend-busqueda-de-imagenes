@@ -60,11 +60,13 @@ app = FastAPI(
 )
 
 # Configuración de CORS para permitir solicitudes desde el frontend de Next.js
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:62351,*.ater.gob.ar").split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:62351").split(",")
+allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX", r"https?://.*\.ater\.gob\.ar")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
